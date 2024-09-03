@@ -3363,14 +3363,14 @@ func TestParseFunctionScopedStructDefinition(t *testing.T) {
 	src := `
 package main
 
-// @Param request body main.Fun.request true "query params" 
+// @Param request body main.Fun.request true "query params"
 // @Success 200 {object} main.Fun.response
 // @Router /test [post]
 func Fun()  {
 	type request struct {
 		Name string
 	}
-	
+
 	type response struct {
 		Name string
 		Child string
@@ -3389,7 +3389,7 @@ func Fun()  {
 	assert.True(t, ok)
 }
 
-func TestParseFunctionScopedStructRequestResponseJSON(t *testing.T) {
+func TestParseFunctionScopedComplexStructDefinition(t *testing.T) {
 	t.Parallel()
 
 	src := `
@@ -3403,6 +3403,63 @@ func Fun()  {
 		Name string
 	}
 	
+	type grandChild struct {
+		Name string
+	}
+
+	type pointerChild struct {
+		Name string
+	}
+
+	type arrayChild struct {
+		Name string
+	}
+
+	type child struct {
+		GrandChild 		grandChild
+		PointerChild 	*pointerChild
+		ArrayChildren   []arrayChild
+	}
+
+	type response struct {
+		Children 	[]child
+	}
+}
+`
+	p := New()
+	_ = p.packages.ParseFile("api", "api/api.go", src, ParseAll)
+	_, err := p.packages.ParseTypes()
+	assert.NoError(t, err)
+
+	err = p.packages.RangeFiles(p.ParseRouterAPIInfo)
+	assert.NoError(t, err)
+
+	_, ok := p.swagger.Definitions["main.Fun.response"]
+	assert.True(t, ok)
+	_, ok = p.swagger.Definitions["main.Fun.child"]
+	assert.True(t, ok)
+	_, ok = p.swagger.Definitions["main.Fun.grandChild"]
+	assert.True(t, ok)
+	_, ok = p.swagger.Definitions["main.Fun.pointerChild"]
+	assert.True(t, ok)
+	_, ok = p.swagger.Definitions["main.Fun.arrayChild"]
+	assert.True(t, ok)
+}
+
+func TestParseFunctionScopedStructRequestResponseJSON(t *testing.T) {
+	t.Parallel()
+
+	src := `
+package main
+
+// @Param request body main.Fun.request true "query params"
+// @Success 200 {object} main.Fun.response
+// @Router /test [post]
+func Fun()  {
+	type request struct {
+		Name string
+	}
+
 	type response struct {
 		Name string
 		Child string
@@ -3453,6 +3510,130 @@ func Fun()  {
                 "child": {
                     "type": "string"
                 },
+                "name": {
+                    "type": "string"
+                }
+            }
+        }
+    }
+}`
+
+	p := New()
+	_ = p.packages.ParseFile("api", "api/api.go", src, ParseAll)
+
+	_, err := p.packages.ParseTypes()
+	assert.NoError(t, err)
+
+	err = p.packages.RangeFiles(p.ParseRouterAPIInfo)
+	assert.NoError(t, err)
+
+	b, _ := json.MarshalIndent(p.swagger, "", "    ")
+	assert.Equal(t, expected, string(b))
+}
+
+func TestParseFunctionScopedComplexStructRequestResponseJSON(t *testing.T) {
+	t.Parallel()
+
+	src := `
+package main
+
+type PublicChild struct {
+	Name string
+}	
+
+// @Param request body main.Fun.request true "query params" 
+// @Success 200 {object} main.Fun.response
+// @Router /test [post]
+func Fun()  {
+	type request struct {
+		Name string
+	}
+	
+	type grandChild struct {
+		Name string
+	}
+
+	type child struct {
+		GrandChild grandChild
+	}
+
+	type response struct {
+		Children 	[]child
+	    PublicChild PublicChild
+	}
+}
+`
+	expected := `{
+    "info": {
+        "contact": {}
+    },
+    "paths": {
+        "/test": {
+            "post": {
+                "parameters": [
+                    {
+                        "description": "query params",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/main.Fun.request"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/main.Fun.response"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "main.Fun.child": {
+            "type": "object",
+            "properties": {
+                "grandChild": {
+                    "$ref": "#/definitions/main.Fun.grandChild"
+                }
+            }
+        },
+        "main.Fun.grandChild": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "main.Fun.request": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "main.Fun.response": {
+            "type": "object",
+            "properties": {
+                "children": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/main.Fun.child"
+                    }
+                },
+                "publicChild": {
+                    "$ref": "#/definitions/main.PublicChild"
+                }
+            }
+        },
+        "main.PublicChild": {
+            "type": "object",
+            "properties": {
                 "name": {
                     "type": "string"
                 }
@@ -3865,6 +4046,24 @@ func TestTryAddDescription(t *testing.T) {
 			},
 		},
 		{
+			name: "added description with multiline",
+			lines: []string{
+				"\t@securitydefinitions.apikey test",
+				"\t@in header",
+				"\t@name x-api-key",
+				"\t@description line1",
+				"\t@description line2",
+			},
+			want: &spec.SecurityScheme{
+				SecuritySchemeProps: spec.SecuritySchemeProps{
+					Name:        "x-api-key",
+					Type:        "apiKey",
+					In:          "header",
+					Description: "line1\nline2",
+				},
+			},
+		},
+		{
 			name: "no description",
 			lines: []string{
 				" @securitydefinitions.oauth2.application swagger",
@@ -4104,4 +4303,86 @@ func TestParser_skipPackageByPrefix(t *testing.T) {
 	assert.True(t, parser.skipPackageByPrefix("github.com/swaggo/swag"))
 	assert.False(t, parser.skipPackageByPrefix("github.com/swaggo/swag/cmd"))
 	assert.False(t, parser.skipPackageByPrefix("github.com/swaggo/swag/gen"))
+}
+
+func TestParser_ParseRouterApiInFuncBody(t *testing.T) {
+	t.Parallel()
+
+	src := `
+package test
+
+func Test(){
+    // @Router /api/{id} [get]
+    _ = func() {
+	}
+}
+`
+	p := New()
+	p.ParseFuncBody = true
+	err := p.packages.ParseFile("api", "api/api.go", src, ParseAll)
+	assert.NoError(t, err)
+
+	err = p.packages.RangeFiles(p.ParseRouterAPIInfo)
+	assert.NoError(t, err)
+
+	ps := p.swagger.Paths.Paths
+
+	val, ok := ps["/api/{id}"]
+
+	assert.True(t, ok)
+	assert.NotNil(t, val.Get)
+}
+
+func TestParser_ParseRouterApiInfoInAndOutFuncBody(t *testing.T) {
+	t.Parallel()
+
+	src := `
+package test
+
+// @Router /api/outside [get]
+func otherRoute(){
+}
+
+func Test(){
+    // @Router /api/inside [get]
+    _ = func() {
+	}
+}
+`
+	p := New()
+	p.ParseFuncBody = true
+	err := p.packages.ParseFile("api", "api/api.go", src, ParseAll)
+	assert.NoError(t, err)
+
+	err = p.packages.RangeFiles(p.ParseRouterAPIInfo)
+	assert.NoError(t, err)
+
+	ps := p.swagger.Paths.Paths
+
+	val1, ok := ps["/api/outside"]
+	assert.True(t, ok)
+	assert.NotNil(t, val1.Get)
+
+	val2, ok := ps["/api/inside"]
+	assert.True(t, ok)
+	assert.NotNil(t, val2.Get)
+}
+
+func TestParser_EmbeddedStructAsOtherAliasGoListNested(t *testing.T) {
+	t.Parallel()
+
+	p := New(SetParseDependency(1), ParseUsingGoList(true))
+
+	p.parseGoList = true
+
+	searchDir := "testdata/alias_nested"
+	expected, err := os.ReadFile(filepath.Join(searchDir, "expected.json"))
+	assert.NoError(t, err)
+
+	err = p.ParseAPI(searchDir, "cmd/main/main.go", 0)
+	assert.NoError(t, err)
+
+	b, err := json.MarshalIndent(p.swagger, "", "    ")
+	assert.NoError(t, err)
+	assert.Equal(t, string(expected), string(b))
 }

@@ -55,7 +55,7 @@ Swag converts Go annotations to Swagger Documentation 2.0. We've created a varie
 ```sh
 go install github.com/swaggo/swag/cmd/swag@latest
 ```
-To build from source you need [Go](https://golang.org/dl/) (1.18 or newer).
+To build from source you need [Go](https://golang.org/dl/) (1.19 or newer).
 
 Alternatively you can run the docker image:
 ```sh
@@ -113,9 +113,10 @@ OPTIONS:
    --overridesFile value                  File to read global type overrides from. (default: ".swaggo")
    --parseGoList                          Parse dependency via 'go list' (default: true)
    --tags value, -t value                 A comma-separated list of tags to filter the APIs for which the documentation is generated.Special case if the tag is prefixed with the '!' character then the APIs with that tag will be excluded
-   --templateDelims value, --td value     Provide custom delimeters for Go template generation. The format is leftDelim,rightDelim. For example: "[[,]]"
+   --templateDelims value, --td value     Provide custom delimiters for Go template generation. The format is leftDelim,rightDelim. For example: "[[,]]"
    --collectionFormat value, --cf value   Set default collection format (default: "csv")
    --state value                          Initial state for the state machine (default: ""), @HostState in root file, @State in other files
+   --parseFuncBody                        Parse API info within body of functions in go files, disabled by default (default: false)
    --help, -h                             show help (default: false)
 ```
 
@@ -931,7 +932,7 @@ func GetPosts(w http.ResponseWriter, r *http.Request) {
 	_ = web.GenericNestedResponse[types.Post]{}
 }
 ```
-See [this file](https://github.com/swaggo/swag/blob/master/testdata/generics_nested/api/api.go) for more details 
+See [this file](https://github.com/swaggo/swag/blob/master/testdata/generics_nested/api/api.go) for more details
 and other examples.
 
 ### Change the default Go Template action delimiters

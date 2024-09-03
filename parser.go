@@ -179,6 +179,9 @@ type Parser struct {
 
 	// HostState is the state of the host
 	HostState string
+
+	// ParseFuncBody whether swag should parse api info inside of funcs
+	ParseFuncBody bool
 }
 
 // FieldParserFactory create FieldParser.
@@ -774,7 +777,10 @@ loopline:
 
 		// Not mandatory field
 		if securityAttr == descriptionAttr {
-			description = value
+			if description != "" {
+				description += "\n"
+			}
+			description += value
 		}
 
 		// next securityDefinitions
@@ -882,6 +888,13 @@ func isGeneralAPIComment(comments []string) bool {
 }
 
 func getMarkdownForTag(tagName string, dirPath string) ([]byte, error) {
+	if tagName == "" {
+		// this happens when parsing the @description.markdown attribute
+		// it will be called properly another time with tagName="api"
+		// so we can safely return an empty byte slice here
+		return make([]byte, 0), nil
+	}
+
 	dirEntries, err := os.ReadDir(dirPath)
 	if err != nil {
 		return nil, err
@@ -894,11 +907,12 @@ func getMarkdownForTag(tagName string, dirPath string) ([]byte, error) {
 
 		fileName := entry.Name()
 
-		if !strings.Contains(fileName, ".md") {
-			continue
+		expectedFileName := tagName
+		if !strings.HasSuffix(tagName, ".md") {
+			expectedFileName = tagName + ".md"
 		}
 
-		if strings.Contains(fileName, tagName) {
+		if fileName == expectedFileName {
 			fullPath := filepath.Join(dirPath, fileName)
 
 			commentInfo, err := os.ReadFile(fullPath)
@@ -1013,31 +1027,51 @@ func matchExtension(extensionToMatch string, comments []*ast.Comment) (match boo
 
 // ParseRouterAPIInfo parses router api info for given astFile.
 func (parser *Parser) ParseRouterAPIInfo(fileInfo *AstFileInfo) error {
-DeclsLoop:
-	for _, astDescription := range fileInfo.File.Decls {
-		if (fileInfo.ParseFlag & ParseOperations) == ParseNone {
-			continue
-		}
-		astDeclaration, ok := astDescription.(*ast.FuncDecl)
-		if ok && astDeclaration.Doc != nil && astDeclaration.Doc.List != nil {
-			if parser.matchTags(astDeclaration.Doc.List) &&
-				matchExtension(parser.parseExtension, astDeclaration.Doc.List) {
-				// for per 'function' comment, create a new 'Operation' object
-				operation := NewOperation(parser, SetCodeExampleFilesDirectory(parser.codeExampleFilesDir))
-				for _, comment := range astDeclaration.Doc.List {
-					err := operation.ParseComment(comment.Text, fileInfo.File)
-					if err != nil {
-						return fmt.Errorf("ParseComment error in file %s :%+v", fileInfo.Path, err)
-					}
-					if operation.State != "" && operation.State != parser.HostState {
-						continue DeclsLoop
-					}
-				}
-				err := processRouterOperation(parser, operation)
-				if err != nil {
+	if (fileInfo.ParseFlag & ParseOperations) == ParseNone {
+		return nil
+	}
+
+	// parse File.Comments instead of File.Decls.Doc if ParseFuncBody flag set to "true"
+	if parser.ParseFuncBody {
+		for _, astComments := range fileInfo.File.Comments {
+			if astComments.List != nil {
+				if err := parser.parseRouterAPIInfoComment(astComments.List, fileInfo); err != nil {
 					return err
 				}
 			}
+		}
+
+		return nil
+	}
+
+	for _, astDescription := range fileInfo.File.Decls {
+		astDeclaration, ok := astDescription.(*ast.FuncDecl)
+		if ok && astDeclaration.Doc != nil && astDeclaration.Doc.List != nil {
+			if err := parser.parseRouterAPIInfoComment(astDeclaration.Doc.List, fileInfo); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func (parser *Parser) parseRouterAPIInfoComment(comments []*ast.Comment, fileInfo *AstFileInfo) error {
+	if parser.matchTags(comments) && matchExtension(parser.parseExtension, comments) {
+		// for per 'function' comment, create a new 'Operation' object
+		operation := NewOperation(parser, SetCodeExampleFilesDirectory(parser.codeExampleFilesDir))
+		for _, comment := range comments {
+			err := operation.ParseComment(comment.Text, fileInfo.File)
+			if err != nil {
+				return fmt.Errorf("ParseComment error in file %s :%+v", fileInfo.Path, err)
+			}
+			if operation.State != "" && operation.State != parser.HostState {
+				return nil
+			}
+		}
+		err := processRouterOperation(parser, operation)
+		if err != nil {
+			return err
 		}
 	}
 
@@ -1282,8 +1316,14 @@ func (parser *Parser) ParseDefinition(typeSpecDef *TypeSpecDef) (*Schema, error)
 		}
 	}
 
+	schemaName := typeName
+
+	if typeSpecDef.SchemaName != "" {
+		schemaName = typeSpecDef.SchemaName
+	}
+
 	sch := Schema{
-		Name:    typeName,
+		Name:    schemaName,
 		PkgPath: typeSpecDef.PkgPath,
 		Schema:  definition,
 	}

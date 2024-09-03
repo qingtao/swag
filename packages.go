@@ -93,7 +93,7 @@ func (pkgDefs *PackagesDefinitions) RangeFiles(handle func(info *AstFileInfo) er
 	for _, info := range pkgDefs.files {
 		// ignore package path prefix with 'vendor' or $GOROOT,
 		// because the router info of api will not be included these files.
-		if strings.HasPrefix(info.PackagePath, "vendor") || strings.HasPrefix(info.Path, runtime.GOROOT()) {
+		if strings.HasPrefix(info.PackagePath, "vendor") || (runtime.GOROOT() != "" && strings.HasPrefix(info.Path, runtime.GOROOT()+string(filepath.Separator))) {
 			continue
 		}
 		sortedFiles = append(sortedFiles, info)
@@ -166,6 +166,8 @@ func (pkgDefs *PackagesDefinitions) parseTypesFromFile(astFile *ast.File, packag
 							pkgDefs.uniqueDefinitions[fullName] = nil
 							anotherTypeDef.NotUnique = true
 							pkgDefs.uniqueDefinitions[anotherTypeDef.TypeName()] = anotherTypeDef
+							anotherTypeDef.SetSchemaName()
+
 							typeSpecDef.NotUnique = true
 							fullName = typeSpecDef.TypeName()
 							pkgDefs.uniqueDefinitions[fullName] = typeSpecDef
@@ -173,6 +175,8 @@ func (pkgDefs *PackagesDefinitions) parseTypesFromFile(astFile *ast.File, packag
 					} else {
 						pkgDefs.uniqueDefinitions[fullName] = typeSpecDef
 					}
+
+					typeSpecDef.SetSchemaName()
 
 					if pkgDefs.packages[typeSpecDef.PkgPath] == nil {
 						pkgDefs.packages[typeSpecDef.PkgPath] = NewPackageDefinitions(astFile.Name.Name, typeSpecDef.PkgPath).AddTypeSpec(typeSpecDef.Name(), typeSpecDef)
@@ -192,6 +196,7 @@ func (pkgDefs *PackagesDefinitions) parseFunctionScopedTypesFromFile(astFile *as
 	for _, astDeclaration := range astFile.Decls {
 		funcDeclaration, ok := astDeclaration.(*ast.FuncDecl)
 		if ok && funcDeclaration.Body != nil {
+			functionScopedTypes := make(map[string]*TypeSpecDef)
 			for _, stmt := range funcDeclaration.Body.List {
 				if declStmt, ok := (stmt).(*ast.DeclStmt); ok {
 					if genDecl, ok := (declStmt.Decl).(*ast.GenDecl); ok && genDecl.Tok == token.TYPE {
@@ -212,11 +217,30 @@ func (pkgDefs *PackagesDefinitions) parseFunctionScopedTypesFromFile(astFile *as
 									}
 								}
 
+								fullName := typeSpecDef.TypeName()
+								if structType, ok := typeSpecDef.TypeSpec.Type.(*ast.StructType); ok {
+									for _, field := range structType.Fields.List {
+										var idt *ast.Ident
+										var ok bool
+										switch field.Type.(type) {
+										case *ast.Ident:
+											idt, ok = field.Type.(*ast.Ident)
+										case *ast.StarExpr:
+											idt, ok = field.Type.(*ast.StarExpr).X.(*ast.Ident)
+										case *ast.ArrayType:
+											idt, ok = field.Type.(*ast.ArrayType).Elt.(*ast.Ident)
+										}
+										if ok && !IsGolangPrimitiveType(idt.Name) {
+											if functype, ok := functionScopedTypes[idt.Name]; ok {
+												idt.Name = functype.TypeName()
+											}
+										}
+									}
+								}
+
 								if pkgDefs.uniqueDefinitions == nil {
 									pkgDefs.uniqueDefinitions = make(map[string]*TypeSpecDef)
 								}
-
-								fullName := typeSpecDef.TypeName()
 
 								anotherTypeDef, ok := pkgDefs.uniqueDefinitions[fullName]
 								if ok {
@@ -234,6 +258,7 @@ func (pkgDefs *PackagesDefinitions) parseFunctionScopedTypesFromFile(astFile *as
 									}
 								} else {
 									pkgDefs.uniqueDefinitions[fullName] = typeSpecDef
+									functionScopedTypes[typeSpec.Name.Name] = typeSpecDef
 								}
 
 								if pkgDefs.packages[typeSpecDef.PkgPath] == nil {
@@ -558,17 +583,23 @@ func (pkgDefs *PackagesDefinitions) FindTypeSpec(typeName string, file *ast.File
 		return typeDef
 	}
 
-	//in case that comment //@name renamed the type with a name without a dot
-	typeDef, ok = pkgDefs.uniqueDefinitions[typeName]
-	if ok {
-		return typeDef
-	}
-
 	name := parts[0]
 	typeDef, ok = pkgDefs.uniqueDefinitions[fullTypeName(file.Name.Name, name)]
 	if !ok {
 		pkgPaths, externalPkgPaths := pkgDefs.findPackagePathFromImports("", file)
 		typeDef = pkgDefs.findTypeSpecFromPackagePaths(pkgPaths, externalPkgPaths, name)
 	}
-	return pkgDefs.parametrizeGenericType(file, typeDef, typeName)
+
+	if typeDef != nil {
+		return pkgDefs.parametrizeGenericType(file, typeDef, typeName)
+	}
+
+	//in case that comment //@name renamed the type with a name without a dot
+	for _, v := range pkgDefs.uniqueDefinitions {
+		if v.SchemaName == typeName {
+			return v
+		}
+	}
+
+	return nil
 }
